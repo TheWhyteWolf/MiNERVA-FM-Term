@@ -10,7 +10,7 @@ depends=('gcc-libs' 'alsa-lib' 'libopenmpt')
 makedepends=('cargo')
 # makepkg's -flto=auto puts GCC LTO bytecode in the vendored C++ static lib,
 # which the Rust linker cannot read; Rust-side LTO still applies via Cargo.
-options=('!lto')
+options=('!lto' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # Regenerate after tagging: updpkgsums && makepkg --printsrcinfo > .SRCINFO
 sha256sums=('SKIP')
