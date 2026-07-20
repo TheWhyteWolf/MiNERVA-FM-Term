@@ -1,0 +1,92 @@
+[
+  {
+    "id": "101-2780-1",
+    "platform": "DEMOS",
+    "game": "Final Fantasy 7 Racing Chocobos",
+    "track": "Final_Fantasy_7_Racing_Chocobos",
+    "file": "101-2780-1_Final_Fantasy_7_Racing_Chocobos.sid",
+    "format": "sid",
+    "meta": "e3e476ecadb6cb7613c3f8b23053e6ed",
+    "src_size": 3857
+  },
+  {
+    "id": "101-3212-1",
+    "platform": "DEMOS",
+    "game": "Last Ninja Solution tune 1",
+    "track": "Last_Ninja_Solution_tune_1",
+    "file": "101-3212-1_Last_Ninja_Solution_tune_1.sid",
+    "format": "sid",
+    "meta": "47c70c4ec6b53a002575ebee5a59c302",
+    "src_size": 11346
+  },
+  {
+    "id": "101-3427-1",
+    "platform": "DEMOS",
+    "game": "Monty Python Demo",
+    "track": "Monty_Python_Demo",
+    "file": "101-3427-1_Monty_Python_Demo.sid",
+    "format": "sid",
+    "meta": "b82d168791a3ae131b3ab3f7f1f447ac",
+    "src_size": 5595
+  },
+  {
+    "id": "116-9061-1",
+    "platform": "SNES",
+    "game": "Air Management 2  Koukuu Ou wo Mezase (Aerobiz Supersonic)",
+    "track": "Africa",
+    "file": "116-9061-1_Africa.spc",
+    "format": "spc",
+    "meta": "66",
+    "src_size": 66136
+  },
+  {
+    "id": "116-9207-1",
+    "platform": "SNES",
+    "game": "BS Zelda",
+    "track": "Confronting Ganon",
+    "file": "116-9207-1_Confronting_Ganon.spc",
+    "format": "spc",
+    "meta": "4",
+    "src_size": 66132
+  },
+  {
+    "id": "116-9221-1",
+    "platform": "SNES",
+    "game": "Captain Commando",
+    "track": "Aquarium",
+    "file": "116-9221-1_Aquarium.spc",
+    "format": "spc",
+    "meta": "118",
+    "src_size": 66088
+  },
+  {
+    "id": "vgz-0",
+    "platform": "MegaDrive",
+    "game": "Sonic 3D Blast (Sonic 3D Flickies Island) (Mega Drive, Genesis)",
+    "track": "01 - Title",
+    "file": "vgzsmp0_01_-_Title.vgz",
+    "format": "vgz",
+    "meta": "",
+    "src_size": 24806
+  },
+  {
+    "id": "vgz-1",
+    "platform": "MegaDrive",
+    "game": "16t (Mega Drive, Genesis)",
+    "track": "01 - Title Theme",
+    "file": "vgzsmp1_01_-_Title_Theme.vgz",
+    "format": "vgz",
+    "meta": "",
+    "src_size": 25827
+  },
+  {
+    "id": "vgz-2",
+    "platform": "NES",
+    "game": "10-Yard Fight",
+    "track": "01 Game Start",
+    "file": "vgzsmp2_01_Game_Start.vgz",
+    "format": "vgz",
+    "meta": "",
+    "src_size": 338
+  }
+]

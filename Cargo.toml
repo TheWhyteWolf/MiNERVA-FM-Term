@@ -1,0 +1,38 @@
+[package]
+name = "minerva-fm"
+version = "0.1.0"
+edition = "2021"
+description = "MiNERVA-FM — retro video game music radio for your terminal"
+license = "MIT"
+repository = "https://github.com/TheWhyteWolf/MiNERVA-FM-Term"
+authors = ["TheWhyteWolf"]
+build = "build.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+cpal = "0.15"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "wav", "pcm", "ogg", "vorbis"] }
+rubato = "0.16"
+flate2 = "1"
+realfft = "3.4"
+ringbuf = "0.4"
+crossbeam-channel = "0.5"
+rand = "0.9"
+walkdir = "2"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+hound = "3"
+
+[build-dependencies]
+cc = "1"
+glob = "0.3"
+
+[features]
+default = ["samples"]
+# Embed the nine demo tracks so the radio plays out of the box with no arguments.
+samples = []
+
+[profile.release]
+lto = true
+strip = true
