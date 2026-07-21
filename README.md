@@ -59,6 +59,13 @@ Duration behaviour mirrors the shell radio: `.spc` tracks get a 60 s minimum
 at 15 min, and a 5 s fade-out is applied. Dead air is skipped: a track that
 goes silent ends early.
 
+Loudness: each emulator maps "full volume" to a different output level (a
+full-scale SID sits ~16 dB below a full-scale SPC), so calibrated per-engine
+gain trims align each format's typical loudness — measured with native 440 Hz
+reference tones rendered through each engine plus RMS statistics over real
+catalogue files. All trims are small cuts (no clipping risk); `--no-trim`
+restores raw engine levels.
+
 SID durations come from the HVSC Songlengths database when available: a
 `Songlengths.md5` found anywhere under a scanned directory is picked up
 automatically (`--songlengths FILE` overrides). Multi-subtune files (SID,

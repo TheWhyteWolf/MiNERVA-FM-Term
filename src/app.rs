@@ -67,6 +67,7 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
         max_track_secs: args.max_track,
         volume: args.volume.clamp(0.0, 1.0),
         sid_db,
+        apply_trim: !args.no_trim,
     };
     let (ctl_tx, ctl_rx) = unbounded::<Control>();
     let (ev_tx, ev_rx) = unbounded::<MixerEvent>();

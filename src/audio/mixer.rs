@@ -2,7 +2,7 @@
 //! and duration caps, feeds the audio ring and the FFT tap ring, and reports
 //! track lifecycle events back to the app.
 
-use super::{duration_policy, envelope_gain, Policy};
+use super::{duration_policy, engine_trim, envelope_gain, Policy};
 use crate::engine::{self, EngineParams, Format, RenderStatus, SubtuneMode, TrackTags};
 use crate::library::TrackData;
 use anyhow::Result;
@@ -45,6 +45,8 @@ pub struct MixerConfig {
     pub max_track_secs: u32,
     pub volume: f32,
     pub sid_db: Option<std::sync::Arc<crate::engine::sid::SidDb>>,
+    /// Apply the calibrated per-engine gain trims (off with --no-trim).
+    pub apply_trim: bool,
 }
 
 pub fn run(
@@ -58,6 +60,7 @@ pub fn run(
     let mut frames: u64 = 0;
     let mut cap_frames: u64 = 0;
     let mut fade_frames: u64 = 0;
+    let mut trim = 1.0f32;
     let mut volume = cfg.volume.clamp(0.0, 1.0);
     let mut paused = false;
     let mut block = vec![0f32; BLOCK_FRAMES * 2];
@@ -70,6 +73,11 @@ pub fn run(
                 Control::Play(req) => {
                     engine = None;
                     frames = 0;
+                    trim = if cfg.apply_trim {
+                        engine_trim(req.format)
+                    } else {
+                        1.0
+                    };
                     match load(req, &cfg) {
                         Ok((e, policy)) => {
                             cap_frames = (policy.cap_secs * cfg.sample_rate as f64) as u64;
@@ -99,9 +107,10 @@ pub fn run(
             (Some(e), false) => {
                 let status = e.render(&mut block);
                 for (i, frame) in block.chunks_exact_mut(2).enumerate() {
-                    let gain = volume * envelope_gain(frames + i as u64, cap_frames, fade_frames);
-                    frame[0] *= gain;
-                    frame[1] *= gain;
+                    let gain =
+                        volume * trim * envelope_gain(frames + i as u64, cap_frames, fade_frames);
+                    frame[0] = (frame[0] * gain).clamp(-1.0, 1.0);
+                    frame[1] = (frame[1] * gain).clamp(-1.0, 1.0);
                     mono[i] = (frame[0] + frame[1]) * 0.5;
                 }
                 frames += BLOCK_FRAMES as u64;
@@ -150,6 +159,7 @@ pub fn render_to_wav(
     seconds_limit: Option<f64>,
     out_path: &std::path::Path,
 ) -> Result<(f64, f32)> {
+    let trim = if cfg.apply_trim { engine_trim(format) } else { 1.0 };
     let (mut engine, policy) = load(PlayRequest { data, format }, cfg)?;
     let cap_secs = seconds_limit.unwrap_or(policy.cap_secs).min(policy.cap_secs);
     let cap_frames = (cap_secs * cfg.sample_rate as f64) as u64;
@@ -169,7 +179,8 @@ pub fn render_to_wav(
     loop {
         let status = engine.render(&mut block);
         for (i, frame) in block.chunks_exact(2).enumerate() {
-            let gain = cfg.volume * envelope_gain(frames + i as u64, cap_frames, fade_frames);
+            let gain =
+                cfg.volume * trim * envelope_gain(frames + i as u64, cap_frames, fade_frames);
             for &s in frame {
                 let v = (s * gain).clamp(-1.0, 1.0);
                 peak = peak.max(v.abs());

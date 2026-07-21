@@ -34,6 +34,39 @@ pub fn duration_policy(
     Policy { cap_secs, fade_secs }
 }
 
+/// Per-engine gain trim, calibrated 2026-07-21 against this pipeline.
+///
+/// Method: (1) 440 Hz full-scale tones byte-crafted natively per format (saw
+/// on SID/SPC-BRR/MOD-sample/WAV, full-volume square on the square-only 2A03,
+/// Game Boy, and SN76489) rendered through the real engines measured each
+/// emulator's headroom mapping — spread is large (SID full scale = -16.2 dBFS
+/// peak vs SPC -0.6). (2) Corpus statistics (8 random catalogue files per
+/// format) showed composers already compensate: raw per-format median RMS sat
+/// within 2.4 dB. Trims therefore align each format's median to the Stream
+/// median (-22.4 dBFS RMS, Stream itself untouched — mastered content):
+///
+///   engine    synthetic full-scale peak   corpus median RMS   trim (dB)
+///   Spc              -0.6 dB                  -20.0 dB        0.76 (-2.4)
+///   Sid             -16.2 dB                  -21.6 dB        0.91 (-0.8)
+///   Vgm             -12.2 dB                  -22.1 dB        0.97 (-0.3)
+///   Stream            0.0 dB                  -22.4 dB        1.00 (ref)
+///
+/// All trims are cuts → zero clipping risk. GmeOther (NSF/GBS/AY/…) and
+/// Tracker had no corpus files; 0.90 is an estimate in the middle of the
+/// measured chip cuts. Within-format mastering variance (±5–12 dB between
+/// tracks) dwarfs these offsets — per-track auto-gain is the future fix for
+/// that. VGM's numbers come from the SN76489 path.
+pub fn engine_trim(format: Format) -> f32 {
+    match format {
+        Format::Spc => 0.76,
+        Format::Vgm => 0.97,
+        Format::Sid => 0.91,
+        Format::GmeOther => 0.90,
+        Format::Tracker => 0.90,
+        Format::Stream => 1.00,
+    }
+}
+
 /// Per-frame gain from the fade-out envelope. `1.0` before the fade window,
 /// linear to `0.0` at the cap, `0.0` after.
 pub fn envelope_gain(frame: u64, cap_frames: u64, fade_frames: u64) -> f32 {
@@ -76,6 +109,22 @@ mod tests {
         let p = duration_policy(Format::Spc, Some(2.0), 3, 900);
         assert_eq!(p.cap_secs, 3.0);
         assert_eq!(p.fade_secs, 0.0);
+    }
+
+    #[test]
+    fn trims_are_sane() {
+        for f in [
+            Format::Spc,
+            Format::Vgm,
+            Format::Sid,
+            Format::GmeOther,
+            Format::Tracker,
+            Format::Stream,
+        ] {
+            let t = engine_trim(f);
+            assert!(t.is_finite() && t > 0.0 && t <= 4.0, "{f:?} trim {t}");
+        }
+        assert_eq!(engine_trim(Format::Stream), 1.0);
     }
 
     #[test]

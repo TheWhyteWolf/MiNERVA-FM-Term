@@ -82,6 +82,7 @@ fn render(args: &Args, out: &std::path::Path) -> Result<()> {
             .songlengths
             .as_deref()
             .and_then(engine::sid::SidDb::open),
+        apply_trim: !args.no_trim,
     };
     let (secs, peak) = audio::mixer::render_to_wav(
         library::TrackData::File(path.clone()),

@@ -74,6 +74,10 @@ pub struct Args {
     #[arg(long, value_name = "FILE")]
     pub songlengths: Option<PathBuf>,
 
+    /// Disable the calibrated per-engine gain trims (raw engine levels).
+    #[arg(long)]
+    pub no_trim: bool,
+
     /// Do not fall back to the built-in demo tracks.
     #[arg(long)]
     pub no_samples: bool,
