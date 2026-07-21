@@ -35,6 +35,8 @@ pub struct TrackEntry {
 pub struct Library {
     pub tracks: Vec<TrackEntry>,
     pub sid_count: usize,
+    /// HVSC Songlengths.md5 spotted during the scan, if any.
+    pub songlengths: Option<PathBuf>,
 }
 
 fn prettify(s: &str) -> String {
@@ -73,6 +75,7 @@ fn entry_for(path: &Path, root: &Path, format: Format) -> TrackEntry {
 
 pub fn scan(paths: &[PathBuf]) -> Library {
     let mut tracks = Vec::new();
+    let mut songlengths = None;
     for arg in paths {
         if arg.is_file() {
             if let Some(fmt) = Format::from_path(arg) {
@@ -87,6 +90,10 @@ pub fn scan(paths: &[PathBuf]) -> Library {
             }
             if let Some(fmt) = Format::from_path(e.path()) {
                 tracks.push(entry_for(e.path(), arg, fmt));
+            } else if songlengths.is_none()
+                && e.file_name().eq_ignore_ascii_case("Songlengths.md5")
+            {
+                songlengths = Some(e.path().to_path_buf());
             }
         }
     }
@@ -94,7 +101,7 @@ pub fn scan(paths: &[PathBuf]) -> Library {
         t.id = format!("#{:04}", i + 1);
     }
     let sid_count = tracks.iter().filter(|t| t.format == Format::Sid).count();
-    Library { tracks, sid_count }
+    Library { tracks, sid_count, songlengths }
 }
 
 /// The nine tracks bundled with the web edition, embedded so the radio plays
@@ -125,10 +132,10 @@ pub fn builtin() -> Library {
         sample!("vgzsmp2_01_Game_Start.vgz", Format::Vgm, "vgz-2", "NES", "10-Yard Fight", "01 Game Start"),
     ];
     let sid_count = tracks.iter().filter(|t| t.format == Format::Sid).count();
-    Library { tracks, sid_count }
+    Library { tracks, sid_count, songlengths: None }
 }
 
 #[cfg(not(feature = "samples"))]
 pub fn builtin() -> Library {
-    Library { tracks: Vec::new(), sid_count: 0 }
+    Library { tracks: Vec::new(), sid_count: 0, songlengths: None }
 }

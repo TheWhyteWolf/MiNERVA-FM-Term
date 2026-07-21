@@ -1,10 +1,12 @@
 pub mod gme;
 mod gme_ffi;
 pub mod openmpt;
+pub mod sid;
 pub mod symphonia;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 
 /// What a render call produced. `Ended` means the buffer may be partially
 /// filled (the rest is zeroed) and the engine has nothing more to give.
@@ -63,7 +65,7 @@ impl Format {
     }
 
     pub fn playable(self) -> bool {
-        self != Format::Sid
+        true
     }
 
     /// Display name used when the file carries no system tag.
@@ -89,6 +91,8 @@ pub enum SubtuneMode {
 pub struct EngineParams {
     pub sample_rate: u32,
     pub subtune_mode: SubtuneMode,
+    /// HVSC Songlengths database, when one was found or given.
+    pub sid_db: Option<Arc<sid::SidDb>>,
 }
 
 /// Construct the right engine for `format` from raw file bytes.
@@ -99,6 +103,11 @@ pub fn create(data: Vec<u8>, format: Format, params: &EngineParams) -> Result<Bo
         }
         Format::Tracker => Ok(Box::new(openmpt::OpenMptEngine::new(data, params.sample_rate)?)),
         Format::Stream => Ok(Box::new(symphonia::SymphoniaEngine::new(data, params.sample_rate)?)),
-        Format::Sid => bail!("SID playback lands in v0.2 (jsSID port)"),
+        Format::Sid => Ok(Box::new(sid::SidEngine::new(
+            data,
+            params.sample_rate,
+            params.subtune_mode,
+            params.sid_db.as_ref(),
+        )?)),
     }
 }

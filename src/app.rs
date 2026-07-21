@@ -42,15 +42,15 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
         },
     );
     if playlist.is_empty() {
-        bail!(
-            "no playable tracks found{}",
-            if library.sid_count > 0 {
-                " (SID files were found, but SID playback lands in v0.2)"
-            } else {
-                ""
-            }
-        );
+        bail!("no playable tracks found");
     }
+
+    // SID durations: explicit --songlengths wins over the scan's discovery.
+    let sid_db = args
+        .songlengths
+        .clone()
+        .or_else(|| library.songlengths.clone())
+        .and_then(|p| crate::engine::sid::SidDb::open(&p));
 
     // Audio ring (~1/3 s at 48 kHz stereo) and the spectrum tap.
     let (audio_prod, audio_cons) = HeapRb::<f32>::new(32768).split();
@@ -66,6 +66,7 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
         spc_min_secs: args.spc_min,
         max_track_secs: args.max_track,
         volume: args.volume.clamp(0.0, 1.0),
+        sid_db,
     };
     let (ctl_tx, ctl_rx) = unbounded::<Control>();
     let (ev_tx, ev_rx) = unbounded::<MixerEvent>();
@@ -237,7 +238,6 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
                     now: now_playing.as_ref(),
                     paused,
                     volume,
-                    sid_count: library.sid_count,
                     status: status.as_deref(),
                 },
                 bars: spectrum.bars(),

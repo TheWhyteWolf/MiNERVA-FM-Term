@@ -21,7 +21,6 @@ pub struct HeaderState<'a> {
     pub now: Option<&'a NowPlaying>,
     pub paused: bool,
     pub volume: f32,
-    pub sid_count: usize,
     pub status: Option<&'a str>, // last skip/error, if any
 }
 
@@ -82,12 +81,6 @@ pub fn lines(state: &HeaderState, width: usize, mode: ColorMode) -> Vec<Line<'st
         None => out.push(Line::from(Span::styled("tuning…", fg(ansi::DIM)))),
     }
 
-    if state.sid_count > 0 {
-        out.push(Line::from(Span::styled(
-            format!("SID: {} file(s) listed — playback lands in v0.2", state.sid_count),
-            fg(ansi::DIM),
-        )));
-    }
     if let Some(msg) = state.status {
         out.push(Line::from(Span::styled(
             clip(msg, width.saturating_sub(1)),

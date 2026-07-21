@@ -38,9 +38,8 @@ fn main() -> Result<()> {
 
     if args.list {
         for t in &library.tracks {
-            let flag = if t.format.playable() { ' ' } else { '!' };
             println!(
-                "{flag} {:10} [{:?}] {} — {}",
+                "{:10} [{:?}] {} — {}",
                 t.id,
                 t.format,
                 t.platform.as_deref().unwrap_or("-"),
@@ -48,9 +47,14 @@ fn main() -> Result<()> {
             );
         }
         println!(
-            "{} track(s), {} unplayable SID (v0.2)",
+            "{} track(s) ({} SID){}",
             library.tracks.len(),
-            library.sid_count
+            library.sid_count,
+            library
+                .songlengths
+                .as_ref()
+                .map(|p| format!(", Songlengths: {}", p.display()))
+                .unwrap_or_default()
         );
         return Ok(());
     }
@@ -74,6 +78,10 @@ fn render(args: &Args, out: &std::path::Path) -> Result<()> {
         spc_min_secs: args.spc_min,
         max_track_secs: args.max_track,
         volume: 1.0, // full scale so the reported peak is meaningful
+        sid_db: args
+            .songlengths
+            .as_deref()
+            .and_then(engine::sid::SidDb::open),
     };
     let (secs, peak) = audio::mixer::render_to_wav(
         library::TrackData::File(path.clone()),

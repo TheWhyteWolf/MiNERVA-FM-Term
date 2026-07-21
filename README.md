@@ -52,12 +52,17 @@ c64, zx_spectrum — rerolled per track like the original radio, lockable with
 | NES / others | `.nsf` `.nsfe` `.gbs` `.ay` `.kss` `.hes` `.gym` `.sap` | game-music-emu |
 | Tracker | `.mod` `.xm` `.s3m` `.it` | libopenmpt (system) |
 | Streamed | `.mp3` `.flac` `.wav` `.ogg` | symphonia (pure Rust) |
-| C64 | `.sid` | **v0.2** — files are listed but skipped for now |
+| C64 | `.sid` | libsidplayfp / reSIDfp (system) |
 
 Duration behaviour mirrors the shell radio: `.spc` tracks get a 60 s minimum
 (many rips carry tiny ID666 tags and the audio loops), every track is capped
 at 15 min, and a 5 s fade-out is applied. Dead air is skipped: a track that
 goes silent ends early.
+
+SID durations come from the HVSC Songlengths database when available: a
+`Songlengths.md5` found anywhere under a scanned directory is picked up
+automatically (`--songlengths FILE` overrides). Multi-subtune files (SID,
+NSF, GBS, …) play a random subtune per spin — lock with `--subtunes first`.
 
 Known limitation: `.vgm` files that use the NES APU (rare — NES music is
 normally `.nsf`) open but play silence; game-music-emu's VGM player covers the
@@ -66,7 +71,7 @@ SN76489/YM2413/YM2612 chips.
 ## Building
 
 ```sh
-cargo build --release           # needs: rust, a C++ compiler, libopenmpt
+cargo build --release           # needs: rust, a C++ compiler, libopenmpt, libsidplayfp
 ```
 
 game-music-emu 0.6.6 is vendored under `vendor/gme/` and built statically by
@@ -78,6 +83,9 @@ game-music-emu 0.6.6 is vendored under `vendor/gme/` and built statically by
 - game-music-emu: LGPL-2.1-or-later (vendored source in `vendor/gme/`,
   license in `LICENSES/`)
 - emu2413: MIT (Mitsutaka Okazaki)
+- libsidplayfp (system dependency): GPL-2.0-or-later — distributed binaries
+  linking it are therefore effectively GPL-2.0-or-later as a combined work;
+  the MiNERVA-FM source itself remains MIT
 
 ## Family
 

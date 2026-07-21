@@ -5,8 +5,8 @@ pkgrel=1
 pkgdesc="Retro video game music radio for your terminal (SPC, VGM, NSF, MOD, and more)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/TheWhyteWolf/MiNERVA-FM-Term"
-license=('MIT' 'LGPL-2.1-or-later')
-depends=('gcc-libs' 'alsa-lib' 'libopenmpt')
+license=('MIT' 'LGPL-2.1-or-later' 'GPL-2.0-or-later')
+depends=('gcc-libs' 'alsa-lib' 'libopenmpt' 'libsidplayfp')
 makedepends=('cargo')
 # makepkg's -flto=auto puts GCC LTO bytecode in the vendored C++ static lib,
 # which the Rust linker cannot read; Rust-side LTO still applies via Cargo.

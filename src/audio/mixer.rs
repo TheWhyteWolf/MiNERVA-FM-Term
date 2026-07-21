@@ -44,6 +44,7 @@ pub struct MixerConfig {
     pub spc_min_secs: u32,
     pub max_track_secs: u32,
     pub volume: f32,
+    pub sid_db: Option<std::sync::Arc<crate::engine::sid::SidDb>>,
 }
 
 pub fn run(
@@ -128,6 +129,7 @@ fn load(req: PlayRequest, cfg: &MixerConfig) -> Result<(Box<dyn engine::Engine>,
     let params = EngineParams {
         sample_rate: cfg.sample_rate,
         subtune_mode: cfg.subtune_mode,
+        sid_db: cfg.sid_db.clone(),
     };
     let engine = engine::create(data, req.format, &params)?;
     let policy = duration_policy(

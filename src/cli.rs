@@ -69,6 +69,11 @@ pub struct Args {
     #[arg(long, default_value_t = 60)]
     pub spc_min: u32,
 
+    /// HVSC Songlengths.md5 database for SID durations (auto-discovered
+    /// during the scan when a file with that name is present).
+    #[arg(long, value_name = "FILE")]
+    pub songlengths: Option<PathBuf>,
+
     /// Do not fall back to the built-in demo tracks.
     #[arg(long)]
     pub no_samples: bool,

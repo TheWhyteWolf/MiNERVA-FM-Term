@@ -37,8 +37,19 @@ fn main() {
         .warnings(false)
         .compile("emu2413");
 
+    // SID: thin C ABI shim over the system libsidplayfp (C++-only API).
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .file("vendor/shim/sidshim.cpp")
+        .define("NDEBUG", None)
+        .warnings(false)
+        .compile("sidshim");
+    println!("cargo:rustc-link-lib=dylib=sidplayfp");
+
     // Tracker formats (.mod .xm .s3m .it) come from the system libopenmpt.
     println!("cargo:rustc-link-lib=dylib=openmpt");
 
     println!("cargo:rerun-if-changed=vendor/gme");
+    println!("cargo:rerun-if-changed=vendor/shim");
 }
