@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod cli;
+mod config;
 mod engine;
 mod library;
 mod playlist;
@@ -11,6 +12,61 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use cli::{Args, SubtunesArg};
 use engine::{Format, SubtuneMode};
+use std::io::{IsTerminal, Write};
+use std::path::PathBuf;
+
+/// Where to play from this run. Order: explicit paths (+ --set-dir, which
+/// also persists) > saved default > interactive prompt (first run) > the
+/// built-in demo tracks (empty list).
+fn resolve_paths(args: &Args) -> Result<Vec<PathBuf>> {
+    let mut paths = args.paths.clone();
+    if let Some(dir) = &args.set_dir {
+        if !dir.is_dir() {
+            bail!("--set-dir: {} is not a directory", dir.display());
+        }
+        config::save_default_dir(dir)?;
+        eprintln!("saved default music directory: {}", dir.display());
+        paths.push(dir.clone());
+    }
+    if !paths.is_empty() {
+        return Ok(paths);
+    }
+    if let Some(saved) = config::load_default_dir() {
+        if saved.is_dir() {
+            return Ok(vec![saved]);
+        }
+        eprintln!(
+            "saved music directory {} no longer exists — let's pick a new one.",
+            saved.display()
+        );
+    }
+    prompt_for_dir()
+}
+
+/// First-run prompt (TTY only). Empty answer = built-in demo tracks.
+fn prompt_for_dir() -> Result<Vec<PathBuf>> {
+    if !std::io::stdin().is_terminal() {
+        return Ok(Vec::new()); // non-interactive: demo tracks
+    }
+    eprintln!("MiNERVA-FM — going on air for the first time.");
+    loop {
+        eprint!("Where does your music live? Enter a directory (or press Enter for the built-in demo tracks): ");
+        std::io::stderr().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let answer = line.trim();
+        if answer.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dir = config::expand_tilde(answer);
+        if dir.is_dir() {
+            config::save_default_dir(&dir)?;
+            eprintln!("saved as your default music directory: {}", dir.display());
+            return Ok(vec![dir]);
+        }
+        eprintln!("{} is not a directory, try again.", dir.display());
+    }
+}
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -19,7 +75,8 @@ fn main() -> Result<()> {
         return render(&args, out);
     }
 
-    let library = if args.paths.is_empty() {
+    let paths = resolve_paths(&args)?;
+    let library = if paths.is_empty() {
         if args.no_samples {
             bail!("no music paths given and --no-samples set");
         }
@@ -29,7 +86,7 @@ fn main() -> Result<()> {
         }
         lib
     } else {
-        let lib = library::scan(&args.paths);
+        let lib = library::scan(&paths);
         if lib.tracks.is_empty() {
             bail!("no supported music files found under the given paths");
         }

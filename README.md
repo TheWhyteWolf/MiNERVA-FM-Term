@@ -24,8 +24,10 @@ Colour:  pico8
 ## Usage
 
 ```sh
-minerva-fm ~/Music/VGM          # scan a directory and go on air
-minerva-fm                      # no args: play the built-in demo tracks
+minerva-fm                      # first run asks for your music directory
+                                # and remembers it; Enter = demo tracks
+minerva-fm ~/Music/VGM          # scan a directory for this run only
+minerva-fm --set-dir ~/Music    # save a new default directory and play
 minerva-fm --list ~/Music/VGM   # show what a scan finds
 ```
 

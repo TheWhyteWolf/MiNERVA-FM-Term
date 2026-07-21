@@ -230,7 +230,9 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
                 spectrum.feed(&fft_buf[..n]);
             }
             spectrum.update();
-            ticker.update(Instant::now());
+            if args.ticker {
+                ticker.update(Instant::now());
+            }
 
             // ---- draw ---------------------------------------------------
             let width = terminal.size()?.width as usize;
@@ -244,8 +246,7 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
                 bars: spectrum.bars(),
                 scheme_idx,
                 spectrum_char: locked_char.unwrap_or(CHARS[char_idx]),
-                ticker_line: ticker.line(width),
-                ticker_colour: ticker.colour,
+                ticker: args.ticker.then(|| (ticker.line(width), ticker.colour)),
                 mode,
             };
             terminal.draw(|f| ui::draw(f, &view))?;

@@ -28,12 +28,23 @@ pub enum ColorsArg {
 ///
 /// Point it at directories or files of game music (.spc .vgm .vgz .nsf .nsfe
 /// .gbs .ay .kss .hes .gym .sap .mod .xm .s3m .it .mp3 .flac .wav .ogg) and
-/// let it play. With no arguments the built-in demo tracks go on air.
+/// let it play. Run with no arguments to use your saved music directory —
+/// on first run you are asked for one and it is remembered. Press Enter at
+/// that prompt to play the built-in demo tracks instead.
 #[derive(Parser, Debug)]
 #[command(name = "minerva-fm", version, about)]
 pub struct Args {
-    /// Music directories and/or files to scan.
+    /// Music directories and/or files to scan (overrides the saved default
+    /// for this run only).
     pub paths: Vec<PathBuf>,
+
+    /// Save DIR as the default music directory, then play from it.
+    #[arg(long, value_name = "DIR")]
+    pub set_dir: Option<PathBuf>,
+
+    /// (secret) Switch on the news ticker.
+    #[arg(long, hide = true)]
+    pub ticker: bool,
 
     /// Master volume, 0.0–1.0.
     #[arg(long, default_value_t = 0.7)]

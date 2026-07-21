@@ -21,8 +21,8 @@ pub struct View<'a> {
     pub bars: &'a [f32; COLS],
     pub scheme_idx: usize,
     pub spectrum_char: char,
-    pub ticker_line: String,
-    pub ticker_colour: schemes::Rgb,
+    /// The secret news ticker (--ticker): text + colour when enabled.
+    pub ticker: Option<(String, schemes::Rgb)>,
     pub mode: ColorMode,
 }
 
@@ -37,23 +37,32 @@ pub fn draw(f: &mut Frame, v: &View) {
         return;
     }
 
-    let [header_area, vis_area, ticker_area] = Layout::vertical([
-        Constraint::Length(HEADER_ROWS),
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    let (header_area, vis_area, ticker_area) = if v.ticker.is_some() {
+        let [h, vis, t] = Layout::vertical([
+            Constraint::Length(HEADER_ROWS),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
+        (h, vis, Some(t))
+    } else {
+        let [h, vis] =
+            Layout::vertical([Constraint::Length(HEADER_ROWS), Constraint::Min(1)]).areas(area);
+        (h, vis, None)
+    };
 
     let header_lines = nowplaying::lines(&v.header, header_area.width as usize, v.mode);
     f.render_widget(Paragraph::new(header_lines), header_area);
 
     draw_spectrum(f, vis_area, v);
 
-    let ticker = Paragraph::new(Span::styled(
-        v.ticker_line.clone(),
-        Style::default().fg(color(v.ticker_colour, v.mode)),
-    ));
-    f.render_widget(ticker, ticker_area);
+    if let (Some((line, colour)), Some(area)) = (&v.ticker, ticker_area) {
+        let ticker = Paragraph::new(Span::styled(
+            line.clone(),
+            Style::default().fg(color(*colour, v.mode)),
+        ));
+        f.render_widget(ticker, area);
+    }
 }
 
 /// Vertical stacks of the track's character, palette-coloured bottom→top,
