@@ -16,18 +16,23 @@
 
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
 namespace {
 
 struct Shim {
-    sidplayfp engine;
+    // Declaration order is load-bearing: members are destroyed in reverse, and
+    // libsidplayfp requires the builder (and tune) to outlive the engine, which
+    // releases its SID emulations back to the builder on teardown. `engine` is
+    // therefore declared LAST so it is destroyed FIRST.
     ReSIDfpBuilder builder{"minerva-residfp"};
     SidTune tune;
     std::string error;
     std::vector<int16_t> carry; // mixed stereo samples not yet handed out
     size_t carry_pos = 0;       // in i16 units
+    sidplayfp engine;
 
     Shim(const uint8_t* data, size_t len) : tune(data, (uint_least32_t)len) {}
 };
@@ -41,7 +46,7 @@ extern "C" {
 // song: 1-based subtune, 0 = the tune's default. Returns null on failure and
 // sets *err_out (valid until the next create on this thread).
 void* sidshim_create(const uint8_t* data, size_t len, unsigned int song,
-                     uint32_t sample_rate, const char** err_out) {
+                     uint32_t sample_rate, const char** err_out) try {
     Shim* s = new Shim(data, len);
     const char* fail = nullptr;
 
@@ -69,12 +74,22 @@ void* sidshim_create(const uint8_t* data, size_t len, unsigned int song,
         return nullptr;
     }
     return s;
+} catch (const std::exception& e) {
+    // No exception may cross the extern "C" boundary into Rust (UB).
+    g_create_error = e.what();
+    if (err_out) *err_out = g_create_error.c_str();
+    return nullptr;
+} catch (...) {
+    g_create_error = "unknown C++ exception in sidshim_create";
+    if (err_out) *err_out = g_create_error.c_str();
+    return nullptr;
 }
 
 // Fill `frames` interleaved stereo frames. Returns frames written, < 0 on
 // engine error (message via sidshim_error).
 int sidshim_render(void* h, int16_t* out, int frames) {
     Shim* s = static_cast<Shim*>(h);
+    try {
     int filled = 0;
     int idle_rounds = 0;
     while (filled < frames) {
@@ -105,6 +120,13 @@ int sidshim_render(void* h, int16_t* out, int frames) {
         s->carry.resize(mixed); // stereo: mix returns total i16 count
     }
     return filled;
+    } catch (const std::exception& e) {
+        s->error = e.what();
+        return -1;
+    } catch (...) {
+        s->error = "unknown C++ exception in sidshim_render";
+        return -1;
+    }
 }
 
 const char* sidshim_error(void* h) {
@@ -131,18 +153,22 @@ void sidshim_destroy(void* h) {
 
 // ---- Songlengths database (HVSC Songlengths.md5) ------------------------
 
-void* sidshim_db_open(const char* path) {
+void* sidshim_db_open(const char* path) try {
     SidDatabase* db = new SidDatabase();
     if (!db->open(path)) {
         delete db;
         return nullptr;
     }
     return db;
+} catch (...) {
+    return nullptr;
 }
 
 // Duration of `h`'s selected subtune in milliseconds, -1 if unknown.
-int32_t sidshim_db_length_ms(void* db, void* h) {
+int32_t sidshim_db_length_ms(void* db, void* h) try {
     return static_cast<SidDatabase*>(db)->lengthMs(static_cast<Shim*>(h)->tune);
+} catch (...) {
+    return -1;
 }
 
 void sidshim_db_close(void* db) {

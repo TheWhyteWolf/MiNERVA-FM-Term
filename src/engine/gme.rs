@@ -98,10 +98,15 @@ impl GmeEngine {
             return Err(e);
         }
         // GME auto-fades at the file's tag length, which would defeat the
-        // SPC minimum-duration floor (tiny ID666 tags). Push its fade far
-        // out; the mixer's envelope owns duration and fading instead.
-        // Silence detection stays on, so dead tracks still end early.
-        unsafe { ffi::gme_set_fade(emu, i32::MAX / 2) };
+        // SPC minimum-duration floor (tiny ID666 tags). Push its fade an hour
+        // out so the mixer's envelope owns duration and fading instead.
+        // NOT i32::MAX: gme_set_fade feeds Music_Emu::msec_to_samples, which
+        // computes sec*sample_rate*channels in int32 and overflows on huge
+        // inputs. 3_600_000 ms is overflow-safe up to 192 kHz and dwarfs any
+        // track under the max-track cap. Silence detection stays on, so dead
+        // tracks still end early.
+        const FADE_START_MS: c_int = 3_600_000; // 1 hour
+        unsafe { ffi::gme_set_fade(emu, FADE_START_MS) };
 
         Ok(GmeEngine {
             emu,

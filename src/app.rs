@@ -24,6 +24,8 @@ use ratatui::Terminal;
 use ringbuf::traits::{Consumer, Split};
 use ringbuf::HeapRb;
 use std::io::stdout;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_millis(33);
@@ -55,7 +57,10 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
     // Audio ring (~1/3 s at 48 kHz stereo) and the spectrum tap.
     let (audio_prod, audio_cons) = HeapRb::<f32>::new(32768).split();
     let (fft_prod, mut fft_cons) = HeapRb::<f32>::new(16384).split();
-    let output = AudioOutput::new(audio_cons)?;
+    // Bumped by the mixer on a skip; the output callback drains its ring so
+    // the previous track's queued audio doesn't play over the new one.
+    let flush_gen = Arc::new(AtomicU64::new(0));
+    let output = AudioOutput::new(audio_cons, flush_gen.clone())?;
 
     let cfg = MixerConfig {
         sample_rate: output.sample_rate,
@@ -71,17 +76,29 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
     };
     let (ctl_tx, ctl_rx) = unbounded::<Control>();
     let (ev_tx, ev_rx) = unbounded::<MixerEvent>();
-    let mixer_handle = std::thread::spawn(move || mixer::run(cfg, ctl_rx, ev_tx, audio_prod, fft_prod));
+    let mixer_handle =
+        std::thread::spawn(move || mixer::run(cfg, ctl_rx, ev_tx, audio_prod, fft_prod, flush_gen));
 
-    // Terminal up — restore on panic as well as on clean exit.
+    // Terminal up — restore on panic as well as on clean exit. If any setup
+    // step fails after raw mode is on, undo it before returning so the user's
+    // shell isn't left raw.
     enable_raw_mode()?;
-    crossterm::execute!(stdout(), EnterAlternateScreen)?;
+    if let Err(e) = crossterm::execute!(stdout(), EnterAlternateScreen) {
+        restore_terminal();
+        return Err(e.into());
+    }
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal();
         orig_hook(info);
     }));
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    let mut terminal = match Terminal::new(CrosstermBackend::new(stdout())) {
+        Ok(t) => t,
+        Err(e) => {
+            restore_terminal();
+            return Err(e.into());
+        }
+    };
 
     // UI state.
     let mode = match args.colors {
@@ -101,18 +118,27 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
     let mut ticker = Ticker::new();
     let mut now_playing: Option<NowPlaying> = None;
     let mut paused = false;
-    let mut volume = args.volume.clamp(0.0, 1.0);
+    let mut volume = if args.volume.is_finite() {
+        args.volume.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let mut status: Option<String> = None;
     let mut consecutive_errors = 0usize;
     let mut fft_buf = vec![0f32; 4096];
 
-    // Kick off the first track; `pending` is the entry the mixer is loading.
+    // Kick off the first track. `pending` is the entry the mixer is loading;
+    // `play_token` tags each Play so we can ignore lifecycle events for tracks
+    // we've already skipped past.
     let mut pending = playlist.next().map(|i| library.tracks[i].clone());
     let mut next_play_at: Option<Instant> = None;
+    let mut play_token: u64 = 0;
     if let Some(entry) = &pending {
+        play_token += 1;
         ctl_tx.send(Control::Play(PlayRequest {
             data: entry.data.clone(),
             format: entry.format,
+            token: play_token,
         }))?;
     }
 
@@ -164,7 +190,16 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
             // ---- mixer events -------------------------------------------
             while let Ok(ev) = ev_rx.try_recv() {
                 match ev {
-                    MixerEvent::Started { tags, policy: _ } => {
+                    MixerEvent::Started {
+                        tags,
+                        policy: _,
+                        token,
+                    } => {
+                        // Ignore a Started for a track we've already skipped
+                        // past, so its metadata can't mislabel the header.
+                        if token != play_token {
+                            continue;
+                        }
                         consecutive_errors = 0;
                         status = None;
                         if locked_scheme.is_none() {
@@ -193,12 +228,19 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
                             });
                         }
                     }
-                    MixerEvent::Finished => {
-                        next_play_at = Some(Instant::now());
+                    MixerEvent::Finished { token } => {
+                        // Only advance for the track that's actually current;
+                        // a stale Finished would otherwise skip an extra track.
+                        if token == play_token {
+                            next_play_at = Some(Instant::now());
+                        }
                     }
-                    MixerEvent::Error(e) => {
+                    MixerEvent::Error { msg, token } => {
+                        if token != play_token {
+                            continue;
+                        }
                         consecutive_errors += 1;
-                        status = Some(format!("skipped: {e}"));
+                        status = Some(format!("skipped: {msg}"));
                         if consecutive_errors > 50 {
                             status = Some("too many consecutive failures — stopped".into());
                         } else {
@@ -213,9 +255,11 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
                 next_play_at = None;
                 if let Some(idx) = playlist.next() {
                     let entry = library.tracks[idx].clone();
+                    play_token += 1;
                     ctl_tx.send(Control::Play(PlayRequest {
                         data: entry.data.clone(),
                         format: entry.format,
+                        token: play_token,
                     }))?;
                     pending = Some(entry);
                 }

@@ -19,7 +19,6 @@ pub struct SymphoniaEngine {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     track_id: u32,
-    in_channels: usize,
     resampler: Option<FastFixedIn<f32>>,
     /// Deinterleaved stereo accumulation waiting to fill a resampler chunk.
     acc: [Vec<f32>; 2],
@@ -48,7 +47,6 @@ impl SymphoniaEngine {
         let track_id = track.id;
         let params = track.codec_params.clone();
         let in_rate = params.sample_rate.ok_or_else(|| anyhow!("unknown sample rate"))?;
-        let in_channels = params.channels.map(|c| c.count()).unwrap_or(2).max(1);
         let decoder =
             symphonia::default::get_codecs().make(&params, &DecoderOptions::default())?;
 
@@ -85,7 +83,6 @@ impl SymphoniaEngine {
             format,
             decoder,
             track_id,
-            in_channels,
             resampler,
             acc: [Vec::new(), Vec::new()],
             pending: VecDeque::new(),
@@ -111,7 +108,9 @@ impl SymphoniaEngine {
                     let mut buf =
                         SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
                     buf.copy_interleaved_ref(decoded);
-                    let ch = self.in_channels;
+                    // Use the decoded packet's own channel count, not the
+                    // container probe's, in case they disagree.
+                    let ch = spec.channels.count().max(1);
                     for frame in buf.samples().chunks_exact(ch) {
                         let l = frame[0];
                         let r = if ch > 1 { frame[1] } else { frame[0] };

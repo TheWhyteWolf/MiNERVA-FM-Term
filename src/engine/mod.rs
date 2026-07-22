@@ -44,7 +44,7 @@ pub enum Format {
     GmeOther, // nsf/nsfe/gbs/ay/kss/hes/gym/sap
     Tracker,  // mod/xm/s3m/it
     Stream,   // mp3/flac/wav/ogg
-    Sid,      // recognised but not playable until the v0.2 jsSID port
+    Sid,      // .sid via libsidplayfp / reSIDfp
 }
 
 impl Format {
@@ -62,10 +62,6 @@ impl Format {
 
     pub fn from_path(path: &Path) -> Option<Format> {
         Format::from_ext(path.extension()?.to_str()?)
-    }
-
-    pub fn playable(self) -> bool {
-        true
     }
 
     /// Display name used when the file carries no system tag.

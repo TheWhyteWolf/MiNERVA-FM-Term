@@ -5,7 +5,6 @@ mod config;
 mod engine;
 mod library;
 mod playlist;
-mod sidlen;
 mod ui;
 
 use anyhow::{bail, Context, Result};
@@ -18,15 +17,20 @@ use std::path::PathBuf;
 /// Where to play from this run. Order: explicit paths (+ --set-dir, which
 /// also persists) > saved default > interactive prompt (first run) > the
 /// built-in demo tracks (empty list).
-fn resolve_paths(args: &Args) -> Result<Vec<PathBuf>> {
+fn resolve_paths(args: &Args, allow_prompt: bool) -> Result<Vec<PathBuf>> {
     let mut paths = args.paths.clone();
     if let Some(dir) = &args.set_dir {
+        // Expand a leading `~` and canonicalize so the saved default survives
+        // a change of working directory — matching the interactive prompt,
+        // which already does this.
+        let dir = config::expand_tilde(&dir.to_string_lossy());
         if !dir.is_dir() {
             bail!("--set-dir: {} is not a directory", dir.display());
         }
-        config::save_default_dir(dir)?;
+        let dir = dir.canonicalize().unwrap_or(dir);
+        config::save_default_dir(&dir)?;
         eprintln!("saved default music directory: {}", dir.display());
-        paths.push(dir.clone());
+        paths.push(dir);
     }
     if !paths.is_empty() {
         return Ok(paths);
@@ -40,7 +44,11 @@ fn resolve_paths(args: &Args) -> Result<Vec<PathBuf>> {
             saved.display()
         );
     }
-    prompt_for_dir()
+    if allow_prompt {
+        prompt_for_dir()
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 /// First-run prompt (TTY only). Empty answer = built-in demo tracks.
@@ -60,6 +68,7 @@ fn prompt_for_dir() -> Result<Vec<PathBuf>> {
         }
         let dir = config::expand_tilde(answer);
         if dir.is_dir() {
+            let dir = dir.canonicalize().unwrap_or(dir);
             config::save_default_dir(&dir)?;
             eprintln!("saved as your default music directory: {}", dir.display());
             return Ok(vec![dir]);
@@ -75,7 +84,9 @@ fn main() -> Result<()> {
         return render(&args, out);
     }
 
-    let paths = resolve_paths(&args)?;
+    // --list is for scripting/inspection: never block on the interactive
+    // first-run prompt — fall back to the built-in demo tracks instead.
+    let paths = resolve_paths(&args, !args.list)?;
     let library = if paths.is_empty() {
         if args.no_samples {
             bail!("no music paths given and --no-samples set");

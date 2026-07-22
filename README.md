@@ -2,9 +2,8 @@
 
 Retro video game music radio for your terminal. The third edition of the
 MiNERVA radio family: a single native binary that re-creates the classic
-three-pane look — now-playing header, audio-reactive spectrum, scrolling
-ticker — with the music synthesised in-process. No tmux, no mpv, no external
-players.
+look — a now-playing header over an audio-reactive spectrum — with the music
+synthesised in-process. No tmux, no mpv, no external players.
 
 ```
 [ NOW PLAYING ] [RANDOM]  Vol 70%
@@ -18,7 +17,6 @@ Colour:  pico8
   :   : :        :
 : : : : :: : : :: : : : :: : :          :
 : : : : :: : : :: : : : :: : : : :  : : :: :   :
-*** [ MiNERVA RADIO ] Streaming SID, SPC, VGM, MOD…
 ```
 
 ## Usage

@@ -9,13 +9,40 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use ringbuf::traits::{Observer, Producer};
 use ringbuf::HeapProd;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 const BLOCK_FRAMES: usize = 1024;
 
+/// Clamp to [-1, 1], mapping any non-finite value (NaN/inf) to silence so a
+/// single bad sample can't reach the device or permanently latch the spectrum.
+#[inline]
+fn sanitize(x: f32) -> f32 {
+    if x.is_finite() {
+        x.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Clamp a requested volume to [0, 1], treating a non-finite value (e.g.
+/// `--volume NaN`) as 0 rather than letting NaN propagate into the mix.
+#[inline]
+fn sanitize_volume(v: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 pub struct PlayRequest {
     pub data: TrackData,
     pub format: Format,
+    /// App-assigned id echoed back on Started/Finished/Error so the app can
+    /// ignore lifecycle events from a track it has already skipped past.
+    pub token: u64,
 }
 
 pub enum Control {
@@ -31,11 +58,12 @@ pub enum Event {
         tags: TrackTags,
         #[allow(dead_code)] // not displayed yet; useful for a duration readout later
         policy: Policy,
+        token: u64,
     },
     /// Track ran out (natural end or cap+fade) — pick the next one.
-    Finished,
+    Finished { token: u64 },
     /// Track failed to load; skip it.
-    Error(String),
+    Error { msg: String, token: u64 },
 }
 
 pub struct MixerConfig {
@@ -55,14 +83,16 @@ pub fn run(
     events: Sender<Event>,
     mut audio: HeapProd<f32>,
     mut fft_tap: HeapProd<f32>,
+    flush_gen: Arc<AtomicU64>,
 ) {
     let mut engine: Option<Box<dyn engine::Engine>> = None;
     let mut frames: u64 = 0;
     let mut cap_frames: u64 = 0;
     let mut fade_frames: u64 = 0;
     let mut trim = 1.0f32;
-    let mut volume = cfg.volume.clamp(0.0, 1.0);
+    let mut volume = sanitize_volume(cfg.volume);
     let mut paused = false;
+    let mut token = 0u64;
     let mut block = vec![0f32; BLOCK_FRAMES * 2];
     let mut mono = vec![0f32; BLOCK_FRAMES];
 
@@ -71,8 +101,13 @@ pub fn run(
         while let Ok(msg) = control.try_recv() {
             match msg {
                 Control::Play(req) => {
+                    token = req.token;
                     engine = None;
                     frames = 0;
+                    // Drop any audio the output already holds from the previous
+                    // track so a skip is heard immediately, not after the ring
+                    // drains (~340 ms). The cpal callback clears on this bump.
+                    flush_gen.fetch_add(1, Ordering::Relaxed);
                     trim = if cfg.apply_trim {
                         engine_trim(req.format)
                     } else {
@@ -84,15 +119,18 @@ pub fn run(
                             fade_frames = (policy.fade_secs * cfg.sample_rate as f64) as u64;
                             let tags = e.tags().clone();
                             engine = Some(e);
-                            let _ = events.send(Event::Started { tags, policy });
+                            let _ = events.send(Event::Started { tags, policy, token });
                         }
                         Err(e) => {
-                            let _ = events.send(Event::Error(e.to_string()));
+                            let _ = events.send(Event::Error {
+                                msg: e.to_string(),
+                                token,
+                            });
                         }
                     }
                 }
                 Control::TogglePause => paused = !paused,
-                Control::SetVolume(v) => volume = v.clamp(0.0, 1.0),
+                Control::SetVolume(v) => volume = sanitize_volume(v),
                 Control::Shutdown => return,
             }
         }
@@ -109,8 +147,8 @@ pub fn run(
                 for (i, frame) in block.chunks_exact_mut(2).enumerate() {
                     let gain =
                         volume * trim * envelope_gain(frames + i as u64, cap_frames, fade_frames);
-                    frame[0] = (frame[0] * gain).clamp(-1.0, 1.0);
-                    frame[1] = (frame[1] * gain).clamp(-1.0, 1.0);
+                    frame[0] = sanitize(frame[0] * gain);
+                    frame[1] = sanitize(frame[1] * gain);
                     mono[i] = (frame[0] + frame[1]) * 0.5;
                 }
                 frames += BLOCK_FRAMES as u64;
@@ -119,14 +157,17 @@ pub fn run(
 
                 if status == RenderStatus::Ended || frames >= cap_frames {
                     engine = None;
-                    let _ = events.send(Event::Finished);
+                    let _ = events.send(Event::Finished { token });
                 }
             }
             _ => {
-                // Paused or idle: keep the stream fed with silence so the
-                // spectrum decays naturally and cpal never underruns loudly.
+                // Paused or idle: feed silence to BOTH rings so cpal never
+                // underruns loudly and the spectrum decays to flat instead of
+                // freezing on the last frame.
                 block.fill(0.0);
                 audio.push_slice(&block);
+                mono.fill(0.0);
+                fft_tap.push_slice(&mono);
                 std::thread::sleep(Duration::from_millis(4));
             }
         }
@@ -160,7 +201,7 @@ pub fn render_to_wav(
     out_path: &std::path::Path,
 ) -> Result<(f64, f32)> {
     let trim = if cfg.apply_trim { engine_trim(format) } else { 1.0 };
-    let (mut engine, policy) = load(PlayRequest { data, format }, cfg)?;
+    let (mut engine, policy) = load(PlayRequest { data, format, token: 0 }, cfg)?;
     let cap_secs = seconds_limit.unwrap_or(policy.cap_secs).min(policy.cap_secs);
     let cap_frames = (cap_secs * cfg.sample_rate as f64) as u64;
     let fade_frames = (policy.fade_secs * cfg.sample_rate as f64) as u64;
@@ -182,7 +223,7 @@ pub fn render_to_wav(
             let gain =
                 cfg.volume * trim * envelope_gain(frames + i as u64, cap_frames, fade_frames);
             for &s in frame {
-                let v = (s * gain).clamp(-1.0, 1.0);
+                let v = sanitize(s * gain);
                 peak = peak.max(v.abs());
                 writer.write_sample((v * 32767.0) as i16)?;
             }
