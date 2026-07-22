@@ -13,7 +13,7 @@ makedepends=('cargo')
 options=('!lto' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # Regenerate after tagging: updpkgsums && makepkg --printsrcinfo > .SRCINFO
-sha256sums=('SKIP')
+sha256sums=('b12eaf8c16288d06e71d54313cb5bea010b4d73d3bafc84844cad4d089d15ac8')
 
 prepare() {
   cd "MiNERVA-FM-Term-$pkgver"
