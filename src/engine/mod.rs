@@ -33,6 +33,13 @@ pub struct TrackTags {
 pub trait Engine: Send {
     fn render(&mut self, out: &mut [f32]) -> RenderStatus;
     fn tags(&self) -> &TrackTags;
+    /// Set when the engine reported `Ended` because it failed rather than
+    /// because the tune ran out. The mixer turns it into an `Event::Error`
+    /// so the reason reaches the status line — nothing may write to stderr
+    /// while the TUI owns the terminal.
+    fn take_error(&mut self) -> Option<String> {
+        None
+    }
 }
 
 /// Playback format families, keyed off the file extension. The distinction

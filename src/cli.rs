@@ -86,6 +86,7 @@ pub struct Args {
     pub songlengths: Option<PathBuf>,
 
     /// Disable the calibrated per-engine gain trims (raw engine levels).
+    /// Playback only — --render always reports raw levels.
     #[arg(long)]
     pub no_trim: bool,
 

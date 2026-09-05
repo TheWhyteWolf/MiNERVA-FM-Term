@@ -68,7 +68,8 @@ restores raw engine levels.
 
 SID durations come from the HVSC Songlengths database when available: a
 `Songlengths.md5` found anywhere under a scanned directory is picked up
-automatically (`--songlengths FILE` overrides). Multi-subtune files (SID,
+automatically (`--songlengths FILE` overrides, and is an error if it cannot
+be opened — the auto-discovered one fails quietly). Multi-subtune files (SID,
 NSF, GBS, …) play a random subtune per spin — lock with `--subtunes first`.
 
 Known limitation: `.vgm` files that use the NES APU (rare — NES music is

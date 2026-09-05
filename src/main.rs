@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use cli::{Args, SubtunesArg};
 use engine::{Format, SubtuneMode};
+use std::ffi::OsStr;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
@@ -23,7 +24,7 @@ fn resolve_paths(args: &Args, allow_prompt: bool) -> Result<Vec<PathBuf>> {
         // Expand a leading `~` and canonicalize so the saved default survives
         // a change of working directory — matching the interactive prompt,
         // which already does this.
-        let dir = config::expand_tilde(&dir.to_string_lossy());
+        let dir = config::expand_tilde(dir.as_os_str());
         if !dir.is_dir() {
             bail!("--set-dir: {} is not a directory", dir.display());
         }
@@ -51,9 +52,13 @@ fn resolve_paths(args: &Args, allow_prompt: bool) -> Result<Vec<PathBuf>> {
     }
 }
 
-/// First-run prompt (TTY only). Empty answer = built-in demo tracks.
+/// First-run prompt. Empty answer = built-in demo tracks.
+///
+/// Both stdin *and* stderr must be terminals. The question goes to stderr, so
+/// gating on stdin alone means `minerva-fm 2>log` blocks on read_line behind a
+/// prompt the user cannot see, looking like a hang.
 fn prompt_for_dir() -> Result<Vec<PathBuf>> {
-    if !std::io::stdin().is_terminal() {
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Ok(Vec::new()); // non-interactive: demo tracks
     }
     eprintln!("MiNERVA-FM — going on air for the first time.");
@@ -66,7 +71,7 @@ fn prompt_for_dir() -> Result<Vec<PathBuf>> {
         if answer.is_empty() {
             return Ok(Vec::new());
         }
-        let dir = config::expand_tilde(answer);
+        let dir = config::expand_tilde(OsStr::new(answer));
         if dir.is_dir() {
             let dir = dir.canonicalize().unwrap_or(dir);
             config::save_default_dir(&dir)?;
@@ -146,11 +151,14 @@ fn render(args: &Args, out: &std::path::Path) -> Result<()> {
         spc_min_secs: args.spc_min,
         max_track_secs: args.max_track,
         volume: 1.0, // full scale so the reported peak is meaningful
-        sid_db: args
-            .songlengths
-            .as_deref()
-            .and_then(engine::sid::SidDb::open),
-        apply_trim: !args.no_trim,
+        sid_db: match args.songlengths.as_deref() {
+            Some(p) => Some(engine::sid::open_required(p)?),
+            None => None,
+        },
+        // Raw engine levels, always. --render is the instrument the trim table
+        // in audio::engine_trim was measured with, so applying that table to
+        // its own measurements would make the next calibration circular.
+        apply_trim: false,
     };
     let (secs, peak) = audio::mixer::render_to_wav(
         library::TrackData::File(path.clone()),
@@ -160,7 +168,7 @@ fn render(args: &Args, out: &std::path::Path) -> Result<()> {
         out,
     )?;
     println!(
-        "rendered {}: {:.1}s, peak {:.3} -> {}",
+        "rendered {}: {:.1}s, raw peak {:.3} -> {}",
         path.display(),
         secs,
         peak,

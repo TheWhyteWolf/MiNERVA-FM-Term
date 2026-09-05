@@ -7,8 +7,9 @@ use anyhow::{anyhow, Result};
 use rand::Rng;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 extern "C" {
     fn sidshim_create(
@@ -39,21 +40,53 @@ fn info_str(p: *const c_char) -> Option<String> {
 }
 
 /// Open handle to a Songlengths.md5 database, shared across track loads.
-pub struct SidDb(*mut c_void);
+///
+/// A lookup is not the read-only operation it looks like: `SidDatabase::lengthMs`
+/// is non-const and drives a stateful ini parser underneath, so concurrent
+/// calls would corrupt its current-section pointer. Every lookup therefore
+/// goes through the mutex — which is what makes the `Sync` impl below true
+/// rather than merely asserted.
+pub struct SidDb(Mutex<*mut c_void>);
+
+// SAFETY: the pointer is a SidDatabase owned solely by this struct, and is
+// only dereferenced under the mutex or in Drop (which holds &mut self).
 unsafe impl Send for SidDb {}
-unsafe impl Sync for SidDb {} // read-only lookups after open
+unsafe impl Sync for SidDb {}
 
 impl SidDb {
     pub fn open(path: &Path) -> Option<Arc<SidDb>> {
-        let cpath = std::ffi::CString::new(path.to_str()?).ok()?;
+        // Bytes, not str: a Songlengths path need not be UTF-8.
+        let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
         let db = unsafe { sidshim_db_open(cpath.as_ptr()) };
-        (!db.is_null()).then(|| Arc::new(SidDb(db)))
+        (!db.is_null()).then(|| Arc::new(SidDb(Mutex::new(db))))
     }
+
+    /// Length of the subtune currently selected in `handle`, in milliseconds,
+    /// or a negative value when the database has no entry for it.
+    fn length_ms(&self, handle: *mut c_void) -> i32 {
+        let db = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { sidshim_db_length_ms(*db, handle) }
+    }
+}
+
+/// Open a database the user named explicitly with `--songlengths`.
+///
+/// Unlike the copy discovered during the scan, this one may not fail quietly:
+/// the fallback is a flat 120-second guess for every SID, and a warning
+/// printed here would be wiped off the screen moments later by the TUI.
+pub fn open_required(path: &Path) -> Result<Arc<SidDb>> {
+    SidDb::open(path).ok_or_else(|| {
+        anyhow!(
+            "--songlengths: {} could not be opened as an HVSC Songlengths database",
+            path.display()
+        )
+    })
 }
 
 impl Drop for SidDb {
     fn drop(&mut self) {
-        unsafe { sidshim_db_close(self.0) };
+        let db = self.0.get_mut().unwrap_or_else(|e| e.into_inner());
+        unsafe { sidshim_db_close(*db) };
     }
 }
 
@@ -62,6 +95,8 @@ pub struct SidEngine {
     buf: Vec<i16>,
     tags: TrackTags,
     ended: bool,
+    /// Set when the shim reported a render failure; collected by the mixer.
+    error: Option<String>,
 }
 
 // Only ever driven from the owning (mixer) thread.
@@ -100,7 +135,7 @@ impl SidEngine {
         let selected = unsafe { sidshim_selected_song(handle) }.max(1);
 
         let duration_secs = db.and_then(|db| {
-            let ms = unsafe { sidshim_db_length_ms(db.0, handle) };
+            let ms = db.length_ms(handle);
             (ms > 0).then(|| ms as f64 / 1000.0)
         });
 
@@ -118,6 +153,7 @@ impl SidEngine {
             buf: Vec::new(),
             tags,
             ended: false,
+            error: None,
         })
     }
 }
@@ -132,8 +168,12 @@ impl Engine for SidEngine {
         self.buf.resize(out.len(), 0);
         let got = unsafe { sidshim_render(self.handle, self.buf.as_mut_ptr(), frames as i32) };
         if got < 0 {
-            let msg = info_str(unsafe { sidshim_error(self.handle) });
-            eprintln!("sid render error: {}", msg.unwrap_or_default());
+            // Hand the reason to the mixer rather than printing it: stderr
+            // here would land mid-frame in the raw-mode TUI, and the user
+            // would never see the "skipped:" line every other failure gets.
+            let msg = info_str(unsafe { sidshim_error(self.handle) })
+                .unwrap_or_else(|| "unknown render failure".into());
+            self.error = Some(format!("sid: {msg}"));
             out.fill(0.0);
             self.ended = true;
             return RenderStatus::Ended;
@@ -152,6 +192,10 @@ impl Engine for SidEngine {
 
     fn tags(&self) -> &TrackTags {
         &self.tags
+    }
+
+    fn take_error(&mut self) -> Option<String> {
+        self.error.take()
     }
 }
 

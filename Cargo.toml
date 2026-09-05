@@ -1,6 +1,6 @@
 [package]
 name = "minerva-fm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "MiNERVA-FM — retro video game music radio for your terminal"
 license = "MIT"

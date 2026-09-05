@@ -67,6 +67,19 @@ pub fn engine_trim(format: Format) -> f32 {
     }
 }
 
+/// Clamp a requested volume to [0, 1], treating a non-finite value (e.g.
+/// `--volume NaN`) as 0. `f32::clamp` alone will not do: it passes NaN
+/// straight through. Shared so the CLI, the UI readout and the mixer cannot
+/// disagree about what a given `--volume` means.
+#[inline]
+pub fn sanitize_volume(v: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 /// Per-frame gain from the fade-out envelope. `1.0` before the fade window,
 /// linear to `0.0` at the cap, `0.0` after.
 pub fn envelope_gain(frame: u64, cap_frames: u64, fade_frames: u64) -> f32 {
@@ -122,9 +135,21 @@ mod tests {
             Format::Stream,
         ] {
             let t = engine_trim(f);
-            assert!(t.is_finite() && t > 0.0 && t <= 4.0, "{f:?} trim {t}");
+            // Cuts only: the doc comment's "zero clipping risk" is what lets
+            // the mixer skip any headroom analysis, so a boost must fail here
+            // rather than hard-clip at sanitize()'s clamp.
+            assert!(t.is_finite() && t > 0.0 && t <= 1.0, "{f:?} trim {t}");
         }
         assert_eq!(engine_trim(Format::Stream), 1.0);
+    }
+
+    #[test]
+    fn volume_nan_is_silence_not_nan() {
+        assert_eq!(sanitize_volume(f32::NAN), 0.0);
+        assert_eq!(sanitize_volume(f32::INFINITY), 0.0);
+        assert_eq!(sanitize_volume(-1.0), 0.0);
+        assert_eq!(sanitize_volume(2.0), 1.0);
+        assert_eq!(sanitize_volume(0.7), 0.7);
     }
 
     #[test]

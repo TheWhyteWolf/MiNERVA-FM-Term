@@ -11,40 +11,37 @@ pub enum Order {
 }
 
 pub struct Playlist {
-    tracks: Vec<usize>,
+    /// Every recognised format is playable, so the playlist is the whole
+    /// library: `next` returns an index into `library.tracks` directly and
+    /// only the track count is needed to pick one.
+    len: usize,
     order: Order,
     pos: usize,
 }
 
 impl Playlist {
     pub fn new(library: &Library, order: Order) -> Playlist {
-        // Every recognised format is playable, so the playlist is just all
-        // scanned tracks.
-        let tracks: Vec<usize> = (0..library.tracks.len()).collect();
         Playlist {
-            tracks,
+            len: library.tracks.len(),
             order,
             pos: 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tracks.is_empty()
+        self.len == 0
     }
 
     /// Index into `library.tracks` of the next track to play.
     pub fn next(&mut self) -> Option<usize> {
-        if self.tracks.is_empty() {
+        if self.len == 0 {
             return None;
         }
         match self.order {
-            Order::Shuffle => {
-                let i = rand::rng().random_range(0..self.tracks.len());
-                Some(self.tracks[i])
-            }
+            Order::Shuffle => Some(rand::rng().random_range(0..self.len)),
             Order::Sequential => {
-                let idx = self.tracks[self.pos % self.tracks.len()];
-                self.pos += 1;
+                let idx = self.pos;
+                self.pos = (self.pos + 1) % self.len;
                 Some(idx)
             }
         }

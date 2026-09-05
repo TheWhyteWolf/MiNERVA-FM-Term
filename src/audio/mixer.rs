@@ -2,7 +2,7 @@
 //! and duration caps, feeds the audio ring and the FFT tap ring, and reports
 //! track lifecycle events back to the app.
 
-use super::{duration_policy, engine_trim, envelope_gain, Policy};
+use super::{duration_policy, engine_trim, envelope_gain, sanitize_volume, Policy};
 use crate::engine::{self, EngineParams, Format, RenderStatus, SubtuneMode, TrackTags};
 use crate::library::TrackData;
 use anyhow::Result;
@@ -21,17 +21,6 @@ const BLOCK_FRAMES: usize = 1024;
 fn sanitize(x: f32) -> f32 {
     if x.is_finite() {
         x.clamp(-1.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
-/// Clamp a requested volume to [0, 1], treating a non-finite value (e.g.
-/// `--volume NaN`) as 0 rather than letting NaN propagate into the mix.
-#[inline]
-fn sanitize_volume(v: f32) -> f32 {
-    if v.is_finite() {
-        v.clamp(0.0, 1.0)
     } else {
         0.0
     }
@@ -83,7 +72,7 @@ pub fn run(
     events: Sender<Event>,
     mut audio: HeapProd<f32>,
     mut fft_tap: HeapProd<f32>,
-    flush_gen: Arc<AtomicU64>,
+    flush_to: Arc<AtomicU64>,
 ) {
     let mut engine: Option<Box<dyn engine::Engine>> = None;
     let mut frames: u64 = 0;
@@ -93,45 +82,54 @@ pub fn run(
     let mut volume = sanitize_volume(cfg.volume);
     let mut paused = false;
     let mut token = 0u64;
+    // Every sample ever handed to the output ring, silence included. Published
+    // as the flush watermark on a skip so the callback knows where the
+    // outgoing track's audio ends.
+    let mut written: u64 = 0;
     let mut block = vec![0f32; BLOCK_FRAMES * 2];
     let mut mono = vec![0f32; BLOCK_FRAMES];
 
     loop {
-        // Drain all pending control messages first.
+        // Drain every pending control message before rendering. Holding 'n'
+        // queues a Play per UI tick and only the last one is ever heard, so
+        // record it and skip the load — a file read plus a full engine
+        // construction — for the ones it supersedes.
+        let mut next_play: Option<PlayRequest> = None;
         while let Ok(msg) = control.try_recv() {
             match msg {
-                Control::Play(req) => {
-                    token = req.token;
-                    engine = None;
-                    frames = 0;
-                    // Drop any audio the output already holds from the previous
-                    // track so a skip is heard immediately, not after the ring
-                    // drains (~340 ms). The cpal callback clears on this bump.
-                    flush_gen.fetch_add(1, Ordering::Relaxed);
-                    trim = if cfg.apply_trim {
-                        engine_trim(req.format)
-                    } else {
-                        1.0
-                    };
-                    match load(req, &cfg) {
-                        Ok((e, policy)) => {
-                            cap_frames = (policy.cap_secs * cfg.sample_rate as f64) as u64;
-                            fade_frames = (policy.fade_secs * cfg.sample_rate as f64) as u64;
-                            let tags = e.tags().clone();
-                            engine = Some(e);
-                            let _ = events.send(Event::Started { tags, policy, token });
-                        }
-                        Err(e) => {
-                            let _ = events.send(Event::Error {
-                                msg: e.to_string(),
-                                token,
-                            });
-                        }
-                    }
-                }
+                Control::Play(req) => next_play = Some(req),
                 Control::TogglePause => paused = !paused,
                 Control::SetVolume(v) => volume = sanitize_volume(v),
                 Control::Shutdown => return,
+            }
+        }
+        if let Some(req) = next_play {
+            token = req.token;
+            engine = None;
+            frames = 0;
+            // Everything written so far belongs to the outgoing track: tell the
+            // output callback to drop exactly that much, so the skip is heard
+            // now instead of after the ring drains (~340 ms).
+            flush_to.store(written, Ordering::Release);
+            trim = if cfg.apply_trim {
+                engine_trim(req.format)
+            } else {
+                1.0
+            };
+            match load(req, &cfg) {
+                Ok((e, policy)) => {
+                    cap_frames = (policy.cap_secs * cfg.sample_rate as f64) as u64;
+                    fade_frames = (policy.fade_secs * cfg.sample_rate as f64) as u64;
+                    let tags = e.tags().clone();
+                    engine = Some(e);
+                    let _ = events.send(Event::Started { tags, policy, token });
+                }
+                Err(e) => {
+                    let _ = events.send(Event::Error {
+                        msg: e.to_string(),
+                        token,
+                    });
+                }
             }
         }
 
@@ -152,12 +150,18 @@ pub fn run(
                     mono[i] = (frame[0] + frame[1]) * 0.5;
                 }
                 frames += BLOCK_FRAMES as u64;
-                audio.push_slice(&block);
+                written += audio.push_slice(&block) as u64;
                 fft_tap.push_slice(&mono); // dropped samples are fine; UI drains fast
 
                 if status == RenderStatus::Ended || frames >= cap_frames {
+                    // An engine that stopped on a failure reports it here
+                    // rather than printing: the terminal belongs to the TUI.
+                    let failure = e.take_error();
                     engine = None;
-                    let _ = events.send(Event::Finished { token });
+                    let _ = match failure {
+                        Some(msg) => events.send(Event::Error { msg, token }),
+                        None => events.send(Event::Finished { token }),
+                    };
                 }
             }
             _ => {
@@ -165,7 +169,7 @@ pub fn run(
                 // underruns loudly and the spectrum decays to flat instead of
                 // freezing on the last frame.
                 block.fill(0.0);
-                audio.push_slice(&block);
+                written += audio.push_slice(&block) as u64;
                 mono.fill(0.0);
                 fft_tap.push_slice(&mono);
                 std::thread::sleep(Duration::from_millis(4));

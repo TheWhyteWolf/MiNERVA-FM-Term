@@ -47,20 +47,26 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
         bail!("no playable tracks found");
     }
 
-    // SID durations: explicit --songlengths wins over the scan's discovery.
-    let sid_db = args
-        .songlengths
-        .clone()
-        .or_else(|| library.songlengths.clone())
-        .and_then(|p| crate::engine::sid::SidDb::open(&p));
+    // SID durations. An explicit --songlengths must open or we stop here: the
+    // silent fallback is a flat 120 s for every SID, and the warning would be
+    // invisible behind the alternate screen a moment later. A database merely
+    // spotted during the scan may still fail quietly.
+    let sid_db = match &args.songlengths {
+        Some(p) => Some(crate::engine::sid::open_required(p)?),
+        None => library
+            .songlengths
+            .as_deref()
+            .and_then(crate::engine::sid::SidDb::open),
+    };
 
     // Audio ring (~1/3 s at 48 kHz stereo) and the spectrum tap.
     let (audio_prod, audio_cons) = HeapRb::<f32>::new(32768).split();
     let (fft_prod, mut fft_cons) = HeapRb::<f32>::new(16384).split();
-    // Bumped by the mixer on a skip; the output callback drains its ring so
-    // the previous track's queued audio doesn't play over the new one.
-    let flush_gen = Arc::new(AtomicU64::new(0));
-    let output = AudioOutput::new(audio_cons, flush_gen.clone())?;
+    // Written by the mixer on a skip: how many samples it had queued before
+    // the new track, so the output callback can drop the previous track's
+    // audio without eating any of the new one's.
+    let flush_to = Arc::new(AtomicU64::new(0));
+    let output = AudioOutput::new(audio_cons, flush_to.clone())?;
 
     let cfg = MixerConfig {
         sample_rate: output.sample_rate,
@@ -70,14 +76,14 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
         },
         spc_min_secs: args.spc_min,
         max_track_secs: args.max_track,
-        volume: args.volume.clamp(0.0, 1.0),
+        volume: crate::audio::sanitize_volume(args.volume),
         sid_db,
         apply_trim: !args.no_trim,
     };
     let (ctl_tx, ctl_rx) = unbounded::<Control>();
     let (ev_tx, ev_rx) = unbounded::<MixerEvent>();
     let mixer_handle =
-        std::thread::spawn(move || mixer::run(cfg, ctl_rx, ev_tx, audio_prod, fft_prod, flush_gen));
+        std::thread::spawn(move || mixer::run(cfg, ctl_rx, ev_tx, audio_prod, fft_prod, flush_to));
 
     // Terminal up — restore on panic as well as on clean exit. If any setup
     // step fails after raw mode is on, undo it before returning so the user's
@@ -118,11 +124,7 @@ pub fn run(args: &Args, library: Library) -> Result<()> {
     let mut ticker = Ticker::new();
     let mut now_playing: Option<NowPlaying> = None;
     let mut paused = false;
-    let mut volume = if args.volume.is_finite() {
-        args.volume.clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    let mut volume = crate::audio::sanitize_volume(args.volume);
     let mut status: Option<String> = None;
     let mut consecutive_errors = 0usize;
     let mut fft_buf = vec![0f32; 4096];

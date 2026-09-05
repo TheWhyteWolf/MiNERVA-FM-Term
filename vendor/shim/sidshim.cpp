@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,11 @@ extern "C" {
 // sets *err_out (valid until the next create on this thread).
 void* sidshim_create(const uint8_t* data, size_t len, unsigned int song,
                      uint32_t sample_rate, const char** err_out) try {
-    Shim* s = new Shim(data, len);
+    // unique_ptr, not a bare new: config()/load()/initMixer() below can throw
+    // (bad_alloc, reSIDfp filter-table setup), and the handler at the bottom
+    // of this function cannot see `s` to delete it. Released to the caller
+    // only on success.
+    auto s = std::make_unique<Shim>(data, len);
     const char* fail = nullptr;
 
     if (!s->tune.getStatus()) {
@@ -68,12 +73,13 @@ void* sidshim_create(const uint8_t* data, size_t len, unsigned int song,
     }
 
     if (fail) {
+        // Copy the message before the Shim (and the buffer `fail` points into)
+        // is destroyed on the way out.
         g_create_error = fail;
         if (err_out) *err_out = g_create_error.c_str();
-        delete s;
         return nullptr;
     }
-    return s;
+    return s.release();
 } catch (const std::exception& e) {
     // No exception may cross the extern "C" boundary into Rust (UB).
     g_create_error = e.what();
@@ -109,15 +115,27 @@ int sidshim_render(void* h, int16_t* out, int frames) {
             s->error = s->engine.error();
             return -1;
         }
-        if (produced == 0) {
-            if (++idle_rounds > 8) break; // defensive: never spin forever
-            continue;
+        unsigned mixed = 0;
+        if (produced > 0) {
+            // Units, per sidplayfp.h: play() returns a per-SID sample count,
+            // mix() takes exactly that count and returns the number of shorts
+            // written — samples for mono, samples*2 for stereo, which is what
+            // initMixer(true) gives us. Hence the *2 allocation and the resize
+            // to the returned total.
+            s->carry.assign((size_t)produced * 2, 0);
+            s->carry_pos = 0;
+            mixed = s->engine.mix(s->carry.data(), (unsigned)produced);
+            s->carry.resize(mixed);
         }
-        idle_rounds = 0;
-        s->carry.assign((size_t)produced * 2, 0);
-        s->carry_pos = 0;
-        unsigned mixed = s->engine.mix(s->carry.data(), (unsigned)produced);
-        s->carry.resize(mixed); // stereo: mix returns total i16 count
+        // A round counts as idle unless it actually yielded samples. Resetting
+        // on `produced` alone would spin forever if play() kept reporting
+        // progress while mix() handed back nothing — wedging the mixer thread,
+        // and with it the join on shutdown, leaving the terminal in raw mode.
+        if (mixed == 0) {
+            if (++idle_rounds > 8) break; // defensive: never spin forever
+        } else {
+            idle_rounds = 0;
+        }
     }
     return filled;
     } catch (const std::exception& e) {
